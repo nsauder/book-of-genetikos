@@ -1,4 +1,4 @@
-#Input for this is in the form of a list of tuples, where each tuple has two positions, the first position is an ND.array which is 
+#nput for this is in the form of a list of tuples, where each tuple has two positions, the first position is an ND.array which is 
 #4xthe length of the promoter sequence represented, where A,G,C,T is the order (so if position 0 is 1, then it is an A, there is only one
 #one for every 4 nucleotides)
 #In second position is an NDarray containing the expression data for all the cell types, in which each position in the 1D tensor represents 
@@ -29,28 +29,31 @@ l_in = lasagne.layers.InputLayer(
 
 l = lasagne.layers.Conv1DLayer(
     l_in,
-    num_filters=32,
-    filter_size=(5,),
+    num_filters=16,
+    filter_size=(3,),
     pad=1,
 )
 
-l = lasagne.layers.Conv1DLayer(
-    l,
-    num_filters=32,
-    filter_size=(5,),
-    pad=1,
-    nonlinearity=lasagne.nonlinearities.rectify,
-    W=lasagne.init.GlorotUniform(),
-)
+layer_letters = 'ccpcccpcccpcccp'
 
-l = lasagne.layers.Conv1DLayer(
-    l,
-    num_filters=32,
-    filter_size=(5,),
-    pad=1,
-    nonlinearity=lasagne.nonlinearities.rectify,
-    W=lasagne.init.GlorotUniform(),
-)
+for layer_type in layer_letters:
+    if layer_type == 'c':
+            l = lasagne.layers.Conv1DLayer(
+                l,
+                num_filters=16,
+                filter_size=(3,),
+                pad=1,
+            )
+
+            l = lasagne.layers.batch_norm(l)
+
+    if layer_type == 'p':
+            l = lasagne.layers.MaxPool1DLayer(
+                    l,
+                    pool_size=(2,),
+                    stride=2,
+            )
+l = lasagne.layers.DropoutLayer(l, p=0.5)
 
 l = lasagne.layers.DenseLayer(
     l,
@@ -60,17 +63,23 @@ l = lasagne.layers.DenseLayer(
 )
 
 label = T.matrix()
-cost = T.mean((lasagne.layers.get_output(l) - label)**2)
+deterministic_output = lasagne.layers.get_output(l, deterministic=True)
+stochastic_output = lasagne.layers.get_output(l, deterministic=False)
 
-all_params = lasagne.layers.get_all_params(l)
+def squared_loss(output, label):
+        return T.mean((output - label)**2)
+
+all_params = lasagne.layers.get_all_params(l,
+                                           trainable=True
+)
 
 updates = lasagne.updates.adam(
-    loss_or_grads=cost,
-    params=all_params,
+        loss_or_grads=squared_loss(stochastic_output, label),
+        params=all_params,
     )
 
 train_fn = theano.function(inputs=[l_in.input_var, label],
-                           outputs=[cost],
+                           outputs=[squared_loss(stochastic_output, label)],
                            updates=updates)
 
 
@@ -82,4 +91,22 @@ for i in xrange(2000):
 		print train_fn(batch[0], batch[1])
         train_fn(batch[0], batch[1])
 
+valid_fn = theano.function(inputs=[l_in.input_var, label],
+                           outputs=[squared_loss(deterministic_output, label)])
+        
+valid_fn(all_promoters[10000:], all_microarrays[10000:])
 
+def visualize_first_layer_filters(weights):
+        assert weights.shape[-2:] == (4,3)
+
+        weights = np.abs(weights)
+        maximal_nucleitides = np.argmax(weights, axis=1)
+
+        letters = 'AGCT'
+        filters = []
+
+        for seq in maximal_nucleitides:
+                filters.append(''.join([letters[nucleitide_num]
+                                        for nucleitide_num in list(seq)]))
+
+        return filters
